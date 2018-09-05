@@ -136,7 +136,7 @@ void gaussian_blur(const unsigned char* const inputChannel,
 	yAdj = yAdj < 0 ? 0 : yAdj;
 	xAdj = xAdj >= numCols ? numCols - 1 : xAdj;
 	yAdj = yAdj >= numRows ? numRows - 1 : yAdj;
-        if (xAdj >= 0 && xAdj < numRows && yAdj >= 0 && yAdj < numCols) {
+        if (xAdj >= 0 && xAdj < numCols && yAdj >= 0 && yAdj < numRows) {
           int filterOffset = i + j * filterWidth;
           int adjOffset = xAdj + yAdj * numCols;
           sum += filter[filterOffset] * inputChannel[adjOffset];
