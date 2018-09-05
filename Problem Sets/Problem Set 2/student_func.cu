@@ -139,7 +139,7 @@ void gaussian_blur(const unsigned char* const inputChannel,
         if (xAdj >= 0 && xAdj < numCols && yAdj >= 0 && yAdj < numRows) {
           int filterOffset = i + j * filterWidth;
           int adjOffset = xAdj + yAdj * numCols;
-          sum += filter[filterOffset] * inputChannel[adjOffset];
+          sum += filter[filterOffset] * (float)inputChannel[adjOffset];
         }
       }
     }
@@ -244,9 +244,9 @@ void separateChannels(const uchar4* const inputImageRGBA,
   if ( x < numCols && y < numRows) {
     int offset = x + y * numCols;
     uchar4 rgba = inputImageRGBA[offset];
-    redChannel[offset] = rgba.x;
-    greenChannel[offset] = rgba.y;
-    blueChannel[offset] = rgba.z;
+    redChannel[offset] = (unsigned char)rgba.x;
+    greenChannel[offset] = (unsigned char)rgba.y;
+    blueChannel[offset] = (unsigned char)rgba.z;
   }
   // TODO
   //
