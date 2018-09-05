@@ -125,6 +125,7 @@ void gaussian_blur(const unsigned char* const inputChannel,
   // __syncthreads();
 
   int halfWidth = filterWidth / 2;
+  if (x ==0 && y ==0) printf("%d %d end", filterWidth, halfWidth);
   float sum = 0.f;
   if ( x < numRows && y < numCols) {
     int addOffset = x + y * numCols;
@@ -159,7 +160,7 @@ void gaussian_blur(const unsigned char* const inputChannel,
   // to sequential reference solution for the exact clamping semantics you should follow.
 }
 
-__global__
+/*__global__
 void share_gaussian_blur(const unsigned char* const inputChannel,
                    unsigned char* const outputChannel,
                    int numRows, int numCols,
@@ -190,7 +191,7 @@ void share_gaussian_blur(const unsigned char* const inputChannel,
     if (idx < filterWidth) shareFilter[i * filterWidth + idx] = filter[i * filterWidth + idx];
   }
 
-  __syncthreads;
+  __syncthreads();
 
   float sum = 0.f;
   for (int i = 0; i < filterWidth; i++){
@@ -199,7 +200,7 @@ void share_gaussian_blur(const unsigned char* const inputChannel,
       for (int j = 0; j < filterWidth; j++){
         int yAdj = j;
         int offsetAdj = yAdj * numCols + xAdj;
-        sum += shareFilter[j * filterWidth + i] * shareInputChannel[offsetAdj]
+        sum += shareFilter[j * filterWidth + i] * shareInputChannel[offsetAdj];
       }
     }
   }
@@ -222,7 +223,7 @@ void share_gaussian_blur(const unsigned char* const inputChannel,
   // the value is out of bounds), you should explicitly clamp the neighbor values you read
   // to be within the bounds of the image. If this is not clear to you, then please refer
   // to sequential reference solution for the exact clamping semantics you should follow.
-}
+}*/
 
 //This kernel takes in an image represented as a uchar4 and splits
 //it into three images consisting of only one color channel each
@@ -315,7 +316,7 @@ void allocateMemoryAndCopyToGPU(const size_t numRowsImage, const size_t numColsI
   //Copy the filter on the host (h_filter) to the memory you just allocated
   //on the GPU.  cudaMemcpy(dst, src, numBytes, cudaMemcpyHostToDevice);
   //Remember to use checkCudaErrors!
-  checkCudaErrors(cudaMemcpy(&d_filter, &h_filter, sizeof(float) * filterWidth* filterWidth, cudaMemcpyHostToDevice));
+  checkCudaErrors(cudaMemcpy(d_filter, h_filter, sizeof(float) * filterWidth* filterWidth, cudaMemcpyHostToDevice));
 
 }
 
