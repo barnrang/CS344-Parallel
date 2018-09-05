@@ -127,11 +127,15 @@ void gaussian_blur(const unsigned char* const inputChannel,
   int halfWidth = filterWidth / 2;
   if (x ==0 && y ==0) printf("%d %d end", filterWidth, halfWidth);
   float sum = 0.f;
-  if ( x < numRows && y < numCols) {
+  if ( x < numCols && y < numRows) {
     int addOffset = x + y * numCols;
     for (int i = 0; i < filterWidth; i++) {
       for (int j = 0; j < filterWidth; j++) {
         int xAdj = x - (halfWidth - i), yAdj = y - (halfWidth - j);
+	xAdj = xAdj < 0 ? 0 : xAdj;
+	yAdj = yAdj < 0 ? 0 : yAdj;
+	xAdj = xAdj >= numCols ? numCols - 1 : xAdj;
+	yAdj = yAdj >= numRows ? numRows - 1 : yAdj;
         if (xAdj >= 0 && xAdj < numRows && yAdj >= 0 && yAdj < numCols) {
           int filterOffset = i + j * filterWidth;
           int adjOffset = xAdj + yAdj * numCols;
