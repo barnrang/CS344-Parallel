@@ -164,7 +164,7 @@ void gaussian_blur(const unsigned char* const inputChannel,
   // to sequential reference solution for the exact clamping semantics you should follow.
 }
 
-/*__global__
+__global__
 void share_gaussian_blur(const unsigned char* const inputChannel,
                    unsigned char* const outputChannel,
                    int numRows, int numCols,
@@ -177,8 +177,8 @@ void share_gaussian_blur(const unsigned char* const inputChannel,
 
   int halfWidth = filterWidth / 2;
 
-  __shared__ unsigned char* shareInputChannel[(numCols) * filterWidth];
-  __shared__ float* shareFilter[filterWidth * filterWidth];
+  __shared__ unsigned char shareInputChannel[10000];
+  __shared__ float shareFilter[121];
 
 
   int idx = threadIdx.x;
@@ -188,8 +188,10 @@ void share_gaussian_blur(const unsigned char* const inputChannel,
 
   for (int i = 0; i < filterWidth; i++) {
     int yAdj = bdy - (halfWidth - i);
+    yAdj = yAdj < 0 ? 0 : yAdj;
+    yAdj = yAdj >= numRows ? numRows - 1 : yAdj;
     if (yAdj >= 0 && yAdj < numRows) {
-      shareInputChannel[(numCols) * i + idx] = inputChannel[yAdj * numCols + idx];
+      shareInputChannel[numCols  * i + idx] = inputChannel[yAdj * numCols + idx];
     }
 
     if (idx < filterWidth) shareFilter[i * filterWidth + idx] = filter[i * filterWidth + idx];
@@ -200,11 +202,13 @@ void share_gaussian_blur(const unsigned char* const inputChannel,
   float sum = 0.f;
   for (int i = 0; i < filterWidth; i++){
     int xAdj = idx - (halfWidth - i);
+    xAdj = xAdj < 0 ? 0 : xAdj;
+    xAdj = xAdj >= numCols ? numCols - 1 : xAdj;
     if (xAdj >= 0 && xAdj < numCols) {
       for (int j = 0; j < filterWidth; j++){
         int yAdj = j;
         int offsetAdj = yAdj * numCols + xAdj;
-        sum += shareFilter[j * filterWidth + i] * shareInputChannel[offsetAdj];
+        sum += shareFilter[j * filterWidth + i] * (float)shareInputChannel[offsetAdj];
       }
     }
   }
@@ -227,7 +231,7 @@ void share_gaussian_blur(const unsigned char* const inputChannel,
   // the value is out of bounds), you should explicitly clamp the neighbor values you read
   // to be within the bounds of the image. If this is not clear to you, then please refer
   // to sequential reference solution for the exact clamping semantics you should follow.
-}*/
+}
 
 //This kernel takes in an image represented as a uchar4 and splits
 //it into three images consisting of only one color channel each
