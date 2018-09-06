@@ -87,19 +87,12 @@ const int DIM = 32;
 const int MAX_MEM = 10000;
 
 #ifndef max
-
 #define max( a, b ) ( ((a) > (b)) ? (a) : (b) )
-
 #endif
-
-
 
 #ifndef min
-
 #define min( a, b ) ( ((a) < (b)) ? (a) : (b) )
-
 #endif
-
 
 __global__ void calculate_maxmin(const float* const d_logLuminance,
   float *blockCollectMax,
@@ -116,8 +109,6 @@ __global__ void calculate_maxmin(const float* const d_logLuminance,
   int y = blockIdx.y * blockDim.y + threadIdx.y; 
   int offset = x + y * numCols;
   int idx_offset = idx + idy * DIM;
-  //if (blockIdx.x == 2 && blockIdx.y == 2)
-  //printf("%f ", d_logLuminance[offset]);
 
   if (x < numCols && y < numRows) {
     sluminance_max[idx_offset] = d_logLuminance[offset];
@@ -142,21 +133,6 @@ __global__ void calculate_maxmin(const float* const d_logLuminance,
   blockCollectMax[blockIdx.y * numBlockx + blockIdx.x] = sluminance_max[0];
   blockCollectMin[blockIdx.y * numBlockx + blockIdx.x] = sluminance_min[0];
 
-  /*__syncthreads();
-
-  int N = numBlockx * numBlocky;
-  int res_idx = blockIdx.y * numBlockx + blockIdx.x;
-  half = N / 2;
-  while (half != 0) {
-    if (res_idx < half){
-      blockCollectMax[res_idx] = max(blockCollectMax[res_idx], blockCollectMax[res_idx + half]);
-      blockCollectMin[res_idx] = min(blockCollectMin[res_idx], blockCollectMin[res_idx + half]);
-    }
-    half /= 2;
-    __syncthreads();
-  }*/
-
-
 }
 
 __global__ void collect_histo(const float* const d_logLuminance,
@@ -168,35 +144,15 @@ __global__ void collect_histo(const float* const d_logLuminance,
                               const size_t numCols,
                               const size_t numBins)
 {
-  int idx = threadIdx.x, idy = threadIdx.y;
   int x = blockIdx.x * blockDim.x + threadIdx.x;
   int y = blockIdx.y * blockDim.y + threadIdx.y; 
   if (x >= numCols && y >= numRows) return;
   int offset = x + y * numCols;
-  int idx_offset = idx + idy * DIM;
 
   int bin_block = min((d_logLuminance[offset] - min_logLum) * numBins / logLumRange,
                        numBins - 1); 
 
   atomicAdd(&collects[bin_block], 1);
-  //collects[offset * numBins + bin_block] = 1;
-
-
-  /*__syncthreads();
-
-  int N = numCols * numRows;
-  int half = N / 2;
-
-  while (half != 0) {
-    if(offset < half){
-      for (int i = 0; i < numBins; i++){ 
-	collects[offset * numBins + i] += collects[(half + offset) * numBins + i];
-      }
-    }
-    __syncthreads();
-    half /= 2;
-  }
-*/
 }
 
 __global__ void cdf_count(unsigned int *collects,
