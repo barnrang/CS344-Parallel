@@ -142,7 +142,7 @@ __global__ void calculate_maxmin(const float* const d_logLuminance,
   blockCollectMax[blockIdx.y * numBlockx + blockIdx.x] = sluminance_max[0];
   blockCollectMin[blockIdx.y * numBlockx + blockIdx.x] = sluminance_min[0];
 
-  __syncthreads();
+  /*__syncthreads();
 
   int N = numBlockx * numBlocky;
   int res_idx = blockIdx.y * numBlockx + blockIdx.x;
@@ -154,7 +154,7 @@ __global__ void calculate_maxmin(const float* const d_logLuminance,
     }
     half /= 2;
     __syncthreads();
-  }
+  }*/
 
 
 }
@@ -171,16 +171,18 @@ __global__ void collect_histo(const float* const d_logLuminance,
   int idx = threadIdx.x, idy = threadIdx.y;
   int x = blockIdx.x * blockDim.x + threadIdx.x;
   int y = blockIdx.y * blockDim.y + threadIdx.y; 
+  if (x >= numCols && y >= numRows) return;
   int offset = x + y * numCols;
   int idx_offset = idx + idy * DIM;
 
   int bin_block = min((d_logLuminance[offset] - min_logLum) * numBins / logLumRange,
                        numBins - 1); 
 
-  collects[offset * numBins + bin_block] = 1;
+  atomicAdd(&collects[bin_block], 1);
+  //collects[offset * numBins + bin_block] = 1;
 
 
-  __syncthreads();
+  /*__syncthreads();
 
   int N = numCols * numRows;
   int half = N / 2;
@@ -194,7 +196,7 @@ __global__ void collect_histo(const float* const d_logLuminance,
     __syncthreads();
     half /= 2;
   }
-
+*/
 }
 
 __global__ void cdf_count(unsigned int *collects,
@@ -259,10 +261,14 @@ void your_histogram_and_prefixsum(const float* const d_logLuminance,
                                         numBlockx,
                                         numBlocky);
   
-  cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());                                      
+  cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
   max_logLum = blockCollectMax[0];                                      
   min_logLum = blockCollectMin[0];
 
+  for(int i = 0; i < numBlockx * numBlockx; i++ ) {
+    max_logLum = max(max_logLum, blockCollectMax[i]);
+    min_logLum = min(min_logLum, blockCollectMin[i]);   
+  }  
   printf("%f %f", max_logLum, min_logLum);
   // Step 2 Diff
   float logLumRange = max_logLum - min_logLum;  
@@ -271,7 +277,8 @@ void your_histogram_and_prefixsum(const float* const d_logLuminance,
   unsigned int *histo;
   unsigned int *collects;
   checkCudaErrors(cudaMallocManaged(&histo, sizeof(unsigned int) * numBins));
-  checkCudaErrors(cudaMallocManaged(&collects, sizeof(unsigned int) * numBins * numCols * numRows));
+  checkCudaErrors(cudaMallocManaged(&collects, sizeof(unsigned int) * numBins));
+  //checkCudaErrors(cudaMallocManaged(&collects, sizeof(unsigned int) * numBins * numCols * numRows));
 
   collect_histo<<<gridSize,blockSize>>>(d_logLuminance,
                                         histo,
