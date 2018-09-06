@@ -80,6 +80,125 @@
 */
 
 #include "utils.h"
+#include <float.h>
+
+#define block_size = 1024
+#define DIM = 32
+#define MAX_MEM = 10000
+
+__global__ void calculate_maxmin(const float* const d_logLuminance,
+  float *blockCollectMax,
+  float *blockCollectMin,
+  const size_t numRows,
+  const size_t numCols,
+  int numBlockx,
+  int numBlocky)                              
+{
+  __shared__ float sluminance_max[block_size];
+  __shared__ float sluminance_min[block_size];
+  int idx = threadIdx.x, idy = threadIdx.y;
+  int x = blockIdx.x * blockDim.x + threadIdx.x;
+  int y = blockIdx.y * blockDim.y + threadIdx.y; 
+  int offset = x + y * numCols;
+  int idx_offset = idx + idy * DIM;
+
+  if (x < numCols && y < numRows) {
+    sluminance_max[idx_offset] = d_logLuminance[offset];
+    sluminance_min[idx_offset] = d_logLuminance[offset];
+  } else {
+    sluminance_max[idx_offset] = 0.f;
+    sluminance_min[idx_offset] = FLT_MAX;
+  }
+
+  __syncthreads();
+
+  int half = block_size / 2;
+  while (half != 0) {
+    if (idx_offset < half){
+      sluminance_max[idx_offset] = max(sluminance_max[idx_offset], sluminance_max[idx_offset + half]);
+      sluminance_min[idx_offset] = min(sluminance_min[idx_offset], sluminance_min[idx_offset + half]);
+    }
+    half /= 2;
+    __syncthreads();
+  }
+
+  blockCollectMax[blockIdx.y * numBlockx + blockIdx.x] = sluminance_max[0];
+  blockCollectMin[blockIdx.y * numBlockx + blockIdx.x] = sluminance_min[0];
+
+  __syncthreads();
+
+  int N = numBlockx * numBlocky;
+  int res_idx = blockIdx.y * numBlockx + blockIdx.x;
+  half = N / 2;
+  while (half != 0) {
+    if (res_idx < half){
+      blockCollectMax[res_idx] = max(blockCollectMax[res_idx], blockCollectMax[res_idx + half]);
+      blockCollectMin[res_idx] = min(blockCollectMin[res_idx], blockCollectMin[res_idx + half]);
+    }
+    half /= 2;
+    __syncthreads();
+  }
+
+
+}
+
+__global__ void collect_histo(const float* const d_logLuminance,
+                              unsigned int *histo,
+                              unsigned int *collects,
+                              float logLumRange,
+                              float min_logLum,
+                              const size_t numRows,
+                              const size_t numCols,
+                              const size_t numBins)
+{
+  int idx = threadIdx.x, idy = threadIdx.y;
+  int x = blockIdx.x * blockDim.x + threadIdx.x;
+  int y = blockIdx.y * blockDim.y + threadIdx.y; 
+  int offset = x + y * numCols;
+  int idx_offset = idx + idy * DIM;
+
+  int bin_block = min((d_logLuminance[offset] - min_logLum) * numBins / logLumRange,
+                       numBins - 1); 
+
+  collects[offset * numBins + bin_block] = 1;
+
+  __syncthreads();
+
+  int N = numCols * numBins;
+  int half = N / 2;
+
+  while (half != 0) {
+    if (offset < half) {
+      for (int i = 0; i < numBins; i++) 
+        collects[offset + i] += collects[offset + numBins * half + i];
+    }
+    half /= 2;
+    __syncthreads();
+  }
+}
+
+__global__ void cdf_count(unsigned int *collects,
+unsigned int* const d_cdf,
+const site_t numBins)
+{
+  if (idx >= numBins) return;
+  __shared__ unsigned int smemory[MAX_MEM];
+  // Implement Hillis / Steele
+  int idx = threadIdx.x;
+  smemory[idx] = collects[idx];
+  unsigned int dist = 1;
+  __syncthreads();
+
+  while (dist < numBins) {
+    if (idx - dist >= 0) {
+      smemory[idx] = smemory[idx - dist]
+    }
+    dist *= 2;
+    __syncthreads();
+  }
+
+  d_cdf[idx] = smemory[idx];
+}
 
 void your_histogram_and_prefixsum(const float* const d_logLuminance,
                                   unsigned int* const d_cdf,
@@ -89,6 +208,7 @@ void your_histogram_and_prefixsum(const float* const d_logLuminance,
                                   const size_t numCols,
                                   const size_t numBins)
 {
+
   //TODO
   /*Here are the steps you need to implement
     1) find the minimum and maximum value in the input logLuminance channel
@@ -100,5 +220,56 @@ void your_histogram_and_prefixsum(const float* const d_logLuminance,
        the cumulative distribution of luminance values (this should go in the
        incoming d_cdf pointer which already has been allocated for you)       */
 
+  // Step 1
+  dim3 blockSize(DIM, DIM, 1);
+  dim3 gridSize((numCols + DIM - 1) / DIM, (numRows + DIM - 1) / DIM, 1);
+  int numBlockx = (numCols + DIM - 1) / DIM;
+  int numBlocky = (numRows + DIM - 1) / DIM;
+  float *blockCollectMax, *blockCollectMin;
+  checkCudaErrors(cudaMallocManaged(&blockCollectMax, sizeof(float) * numBlockx * numBlocky));
+  checkCudaErrors(cudaMallocManaged(&blockCollectMin, sizeof(float) * numBlockx * numBlocky));
 
+  calculate_maxmin<<<gridSize,blockSize>>>(d_logLuminance,
+                                        blockCollectMax,
+                                        blockCollectMin,
+                                        numRows,
+                                        numCols,
+                                        numBlockx,
+                                        numBlocky);
+  
+  cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());                                      
+  max_logLum = blockCollectMax[0];                                      
+  min_logLum = blockCollectMin[0];
+
+  // Step 2 Diff
+  float logLumRange = max_logLum - min_logLum;  
+
+  // Step 3 Histrogram
+  unsigned int *histo;
+  unsigned int *collects;
+  checkCudaErrors(cudaMallocManaged(&histo, sizeof(unsigned int) * numBins));
+  checkCudaErrors(cudaMallocManaged(&collects, sizeof(unsigned int) * numBins * numCols
+                                    * numRows));
+
+  collect_histo<<<gridSize,blockSize>>>(d_logLuminance,
+                                        histo,
+                                        collects,
+                                        logLumRange,
+                                        min_logLum,
+                                        numRows,
+                                        numCols,
+                                        numBins);
+
+  cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError()); 
+  // Step 4 CDF
+  cdf_count<<<1, numBins>>>(collects, d_cdf, numBins);
+  cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError()); 
+  
+  checkCudaErrors(cudaFree(blockCollectMax));
+  checkCudaErrors(cudaFree(blockCollectMin));
+  checkCudaErrors(cudaFree(histo));
+  checkCudaErrors(cudaFree(collects));
 }
+
+
+
