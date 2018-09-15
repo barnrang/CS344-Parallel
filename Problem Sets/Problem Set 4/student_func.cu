@@ -88,6 +88,7 @@ __global__ void  scanSB(unsigned int* const d_inputVals,
   int numMaxBlock) 
 {
   __shared__ unsigned int s_inputVals[FIND_MAX_THREADS];
+  __shared__ unsigned int s_inputValsTMP[FIND_MAX_THREADS];
   int idx = threadIdx.x + blockIdx.x * blockDim.x;
   if (idx < numElems){
     s_inputVals[threadIdx.x] = (d_inputVals[idx] & pos) == compare;
@@ -96,6 +97,7 @@ __global__ void  scanSB(unsigned int* const d_inputVals,
   __syncthreads();
 
   int dist = 1;
+  int count = 0;
 
   while (dist < FIND_MAX_THREADS) {
     if (threadIdx.x >= dist) {
