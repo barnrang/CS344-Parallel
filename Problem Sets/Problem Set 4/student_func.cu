@@ -168,6 +168,7 @@ void your_sort(unsigned int* const d_inputVals,
   checkCudaErrors(cudaMallocManaged(&d_collectMax, sizeof(unsigned int) * numMaxBlock));
   findMax <<<numMaxBlock,FIND_MAX_THREADS>>>(d_inputVals, d_collectMax, numElems);
   findMax <<<1, numMaxBlock>>>(d_collectMax, d_collectMax, numMaxBlock);
+  cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
   unsigned int MAX = d_collectMax[0];
   checkCudaErrors(cudaFree(d_collectMax));
 
@@ -190,18 +191,23 @@ void your_sort(unsigned int* const d_inputVals,
     scanSB<<<numMaxBlock,FIND_MAX_THREADS>>>(d_inputVals, 
       d_collectScan, d_sumBlock, MSB, numElems, 0,
       numMaxBlock);
+    cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
     reduceBlockSum<<<1,numMaxBlock>>>(d_sumBlock, numMaxBlock);
+    cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
     mergeScan<<<numMaxBlock, FIND_MAX_THREADS>>>(d_inputVals,
       d_collectScan,
       d_collectSumScan,
       d_sumBlock,
       d_interVals,
       0);
+    cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
     int offset = d_sumBlock[numMaxBlock - 1];
     scanSB<<<numMaxBlock,FIND_MAX_THREADS>>>(d_inputVals, 
       d_collectScan, d_sumBlock, MSB, numElems, 1,
       numMaxBlock);
+      cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
     reduceBlockSum<<<1,numMaxBlock>>>(d_sumBlock, numMaxBlock);
+    cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
     mergeScan<<<numMaxBlock, FIND_MAX_THREADS>>>(d_inputVals,
       d_collectScan,
       d_collectSumScan,
@@ -209,7 +215,7 @@ void your_sort(unsigned int* const d_inputVals,
       d_interVals,
       d_interPos,
       offset);
-      
+      cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
     checkCudaErrors(cudaMemcpy(d_inputPos, d_interPos, sizeof(unsigned int) * numElems, cudaMemcpyDeviceToDevice));
     checkCudaErrors(cudaMemcpy(d_inputVals, d_interVals, sizeof(unsigned int) * numElems, cudaMemcpyDeviceToDevice));
     MSB *= 2;
