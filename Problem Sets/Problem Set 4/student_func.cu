@@ -100,35 +100,70 @@ __global__ void  scanSB(unsigned int* const d_inputVals,
   int count = 0;
 
   while (dist < FIND_MAX_THREADS) {
-    if (threadIdx.x >= dist) {
-      s_inputVals[threadIdx.x] += s_inputVals[threadIdx.x - dist];
+    if (count % 2 == 0){
+      s_inputValsTMP[threadIdx.x] = s_inputVals[threadIdx.x];
+      if (threadIdx.x >= dist) {
+        s_inputValsTMP[threadIdx.x] += s_inputVals[threadIdx.x - dist];
+      }
+      __syncthreads();
+    }
+    else {
+      s_inputVals[threadIdx.x] = s_inputValsTMP[threadIdx.x];
+      if (threadIdx.x >= dist) {
+        s_inputVals[threadIdx.x] += s_inputValsTMP[threadIdx.x - dist];
+      }
+      __syncthreads();
     }
     dist *= 2;
-    __syncthreads();
+    count++; 
   }
-  d_collectSumScan[idx] = s_inputVals[threadIdx.x];
-  d_sumBlock[blockIdx.x] = s_inputVals[FIND_MAX_THREADS - 1];
+  if (count % 2 == 0){
+    d_collectSumScan[idx] = s_inputVals[threadIdx.x];
+    d_sumBlock[blockIdx.x] = s_inputVals[FIND_MAX_THREADS - 1];
+  } else {
+    d_collectSumScan[idx] = s_inputValsTMP[threadIdx.x];
+    d_sumBlock[blockIdx.x] = s_inputValsTMP[FIND_MAX_THREADS - 1];
+  }
 }
 
 __global__ void  reduceBlockSum(unsigned int *d_sumBlock,
 const size_t numMaxBlock)
 {
   __shared__ unsigned int s_sumBlock[FIND_MAX_THREADS];
+  __shared__ unsigned int s_sumBlockTMP[FIND_MAX_THREADS];
   int idx = threadIdx.x;
   if(idx >= numMaxBlock) return;
   s_sumBlock[idx] = d_sumBlock[idx];
   __syncthreads();
 
   int dist = 1;
+  int count = 0;
   while (dist < numMaxBlock) {
-    if (idx >= dist) {
-      s_sumBlock[idx] += s_sumBlock[idx - dist];
+    if(count % 2 == 0){
+      s_sumBlockTMP[idx] = s_sumBlock[idx];
+      if (idx >= dist) {
+        s_sumBlockTMP[idx] += s_sumBlock[idx - dist];
+      }
     }
+    else {
+      s_sumBlock[idx] = s_sumBlockTMP[idx];
+      if (idx >= dist) {
+        s_sumBlock[idx] += s_sumBlockTMP[idx - dist];
+      }
+    }
+    
     dist *= 2;
+    count++;
     __syncthreads();
   }
-  if(idx < numMaxBlock) d_sumBlock[idx + 1] = s_sumBlock[idx];
-  else d_sumBlock[0] = 0;
+  if (count % 2 == 0){
+    if(idx < numMaxBlock) d_sumBlock[idx + 1] = s_sumBlock[idx];
+    else d_sumBlock[0] = 0;
+  } else {
+    if(idx < numMaxBlock) d_sumBlock[idx + 1] = s_sumBlockTMP[idx];
+    else d_sumBlock[0] = 0;
+  }
+  
 }
 
 __global__ void  mergeScan(unsigned int* const d_inputVals,
