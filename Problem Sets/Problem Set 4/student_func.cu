@@ -125,7 +125,7 @@ const size_t numMaxBlock)
     dist *= 2;
     __syncthreads();
   }
-  if(idx < (numMaxBlock-1)) d_sumBlock[idx + 1] = s_sumBlock[idx];
+  if(idx < numMaxBlock) d_sumBlock[idx + 1] = s_sumBlock[idx];
   else d_sumBlock[0] = 0;
 }
 
@@ -139,7 +139,7 @@ unsigned int *d_interPos,
 unsigned int offset)
 {
   int idx = threadIdx.x + blockIdx.x * blockDim.x;
-  if (!d_collectScan[idx]) return;
+  if (d_collectScan[idx]==0) return;
   d_interVals[d_collectSumScan[idx] + d_sumBlock[blockIdx.x] + offset - 1] = d_inputVals[idx];
   d_interPos[d_collectSumScan[idx] + d_sumBlock[blockIdx.x] + offset - 1] = d_inputPos[idx];
 }
@@ -229,10 +229,16 @@ void your_sort(unsigned int* const d_inputVals,
       cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
     //printf("%d\n", d_collectScan[2]);
     //printf("%d\n", d_inputVals[2]);
-    int offset = d_sumBlock[numMaxBlock - 1];
+    int offset = d_sumBlock[numMaxBlock];
     printf("\n %d", offset);
     scanSB<<<numMaxBlock,FIND_MAX_THREADS>>>(d_inputVals, 
-      d_collectScan, d_collectSumScan, d_sumBlock, MSB, numElems, MSB, numMaxBlock);
+      d_collectScan, 
+      d_collectSumScan, 
+      d_sumBlock, 
+      MSB, 
+      numElems, 
+      MSB, 
+      numMaxBlock);
       cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
     reduceBlockSum<<<1,numMaxBlock>>>(d_sumBlock, numMaxBlock);
     cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
