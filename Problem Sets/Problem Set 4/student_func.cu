@@ -56,7 +56,7 @@ const int DIM = 32;
 const int MAX_THREADS_PER_BLOCK = 65535;
 const int FIND_MAX_THREADS = 4096; //allocate to shared memory
 
-__global__ findMax(unsigned int* const d_inputVals,
+__global__ void  findMax(unsigned int* const d_inputVals,
 unsigned int *d_collectMax,
 const size_t numElems)
 {
@@ -78,7 +78,7 @@ const size_t numElems)
 
 }
 
-__global__ scanSB(unsigned int* const d_inputVals, 
+__global__ void  scanSB(unsigned int* const d_inputVals, 
   bool *d_collectScan,
   unsigned int *d_collectSumScan,
   unsigned int *d_sumBlock,
@@ -92,8 +92,6 @@ __global__ scanSB(unsigned int* const d_inputVals,
   if (idx < numElems){
     s_inputVals[idx] = d_inputVals[idx] & pos == compare;
     d_collectScan[idx] = s_inputVals[idx];
-  } else {
-    s_inputVals[idx] = 0;
   }
   __syncthreads();
 
@@ -107,14 +105,13 @@ __global__ scanSB(unsigned int* const d_inputVals,
     __syncthreads();
   }
   d_collectSumScan[idx] = s_inputVals[threadIdx.x];
-  if (blockIdx.x < (numMaxBlock - 1)) d_sumBlock[blockIdx.x + 1] = s_inputVals[FIND_MAX_THREADS - 1];
-  else d_sumBlock[0] = 0;
+  d_sumBlock[blockIdx.x] = s_inputVals[FIND_MAX_THREADS - 1];
 }
 
-__global__ reduceBlockSum(unsigned int *d_sumBlock,
-int numMaxBlock)
+__global__ void  reduceBlockSum(unsigned int *d_sumBlock,
+const size_t numMaxBlock)
 {
-  __shared__ unsigned int s_sumBlock[numMaxBlock];
+  __shared__ unsigned int s_sumBlock[FIND_MAX_THREADS];
   int idx = threadIdx.x;
   if(idx >= numMaxBlock) return;
   s_sumBlock[idx] = d_sumBlock[idx];
@@ -131,7 +128,8 @@ int numMaxBlock)
   d_sumBlock[idx] = s_sumBlock[idx];
 }
 
-__global__ mergeScan(unsigned int* const d_inputVals,
+__global__ void  mergeScan(unsigned int* const d_inputVals,
+unsigned int* const d_inputPos,
 bool *d_collectScan,
 unsigned int *d_collectSumScan,
 unsigned int *d_sumBlock,
@@ -141,11 +139,11 @@ unsigned int offset)
 {
   int idx = threadIdx.x + blockIdx.x * blockDim.x;
   if (d_collectScan[idx] == 0) return;
-  d_interVals[d_collectSumScan[idx] + d_sumBlock[blockIdx.x] + offset] = d_inputVals[idx];
-  d_interPos[d_collectSumScan[idx] + d_sumBlock[blockIdx.x] + offset] = d_inputPos[idx];
+  d_interVals[d_collectSumScan[idx] + d_sumBlock[max(blockIdx.x - 1, 0) + offset]] = d_inputVals[idx];
+  d_interPos[d_collectSumScan[idx] + d_sumBlock[max(blockIdx.x - 1, 0) + offset]] = d_inputPos[idx];
 }
 
-__global__ copyData(unsigned int* const d_inputVals, 
+__global__ void  copyData(unsigned int* const d_inputVals, 
   unsigned int *d_interVals, 
   size_t const numElems)
 {
@@ -153,6 +151,8 @@ __global__ copyData(unsigned int* const d_inputVals,
   if (idx >= numElems) return;
   d_inputVals[idx] = d_interVals[idx];
 }
+
+
 
 void your_sort(unsigned int* const d_inputVals,
                unsigned int* const d_inputPos,
@@ -163,13 +163,14 @@ void your_sort(unsigned int* const d_inputVals,
   //TODO
 
   // P.1 search for maximum
+  printf("hello");
   unsigned int *d_collectMax;
   int numMaxBlock = (numElems + FIND_MAX_THREADS - 1)/FIND_MAX_THREADS;
   checkCudaErrors(cudaMallocManaged(&d_collectMax, sizeof(unsigned int) * numMaxBlock));
   findMax <<<numMaxBlock,FIND_MAX_THREADS>>>(d_inputVals, d_collectMax, numElems);
   findMax <<<1, numMaxBlock>>>(d_collectMax, d_collectMax, numMaxBlock);
-  cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
   unsigned int MAX = d_collectMax[0];
+  printf("max %d \n", MAX);
   checkCudaErrors(cudaFree(d_collectMax));
 
   // P.2 Scan and Compact
@@ -189,33 +190,35 @@ void your_sort(unsigned int* const d_inputVals,
     3. compact elements by merging all block
     */
     scanSB<<<numMaxBlock,FIND_MAX_THREADS>>>(d_inputVals, 
-      d_collectScan, d_sumBlock, MSB, numElems, 0,
+      d_collectScan,
+      d_collectSumScan,
+      d_sumBlock,
+      MSB,
+      numElems,
+      0, 
       numMaxBlock);
-    cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
     reduceBlockSum<<<1,numMaxBlock>>>(d_sumBlock, numMaxBlock);
-    cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
     mergeScan<<<numMaxBlock, FIND_MAX_THREADS>>>(d_inputVals,
+      d_inputPos,
       d_collectScan,
       d_collectSumScan,
       d_sumBlock,
       d_interVals,
+      d_interPos,
       0);
-    cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
     int offset = d_sumBlock[numMaxBlock - 1];
     scanSB<<<numMaxBlock,FIND_MAX_THREADS>>>(d_inputVals, 
-      d_collectScan, d_sumBlock, MSB, numElems, 1,
-      numMaxBlock);
-      cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
+      d_collectScan, d_collectSumScan, d_sumBlock, MSB, numElems, 1, numMaxBlock);
     reduceBlockSum<<<1,numMaxBlock>>>(d_sumBlock, numMaxBlock);
-    cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
     mergeScan<<<numMaxBlock, FIND_MAX_THREADS>>>(d_inputVals,
+      d_inputPos,
       d_collectScan,
       d_collectSumScan,
       d_sumBlock,
       d_interVals,
       d_interPos,
       offset);
-      cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
+      
     checkCudaErrors(cudaMemcpy(d_inputPos, d_interPos, sizeof(unsigned int) * numElems, cudaMemcpyDeviceToDevice));
     checkCudaErrors(cudaMemcpy(d_inputVals, d_interVals, sizeof(unsigned int) * numElems, cudaMemcpyDeviceToDevice));
     MSB *= 2;

@@ -1,4 +1,4 @@
-NVCC=/usr/local/cuda-5.0/bin/nvcc
+NVCC=/usr/local/cuda-9.2/bin/nvcc
 #NVCC=nvcc
 
 ###################################
