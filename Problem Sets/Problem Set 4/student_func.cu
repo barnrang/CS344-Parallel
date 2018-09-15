@@ -102,22 +102,19 @@ __global__ void  scanSB(unsigned int* const d_inputVals,
   while (dist < FIND_MAX_THREADS) {
     if (count % 2 == 0){
       s_inputValsTMP[threadIdx.x] = s_inputVals[threadIdx.x];
-      __syncthreads();
       if (threadIdx.x >= dist) {
         s_inputValsTMP[threadIdx.x] += s_inputVals[threadIdx.x - dist];
       }
-      __syncthreads();
     }
     else {
       s_inputVals[threadIdx.x] = s_inputValsTMP[threadIdx.x];
-      __syncthreads();
       if (threadIdx.x >= dist) {
         s_inputVals[threadIdx.x] += s_inputValsTMP[threadIdx.x - dist];
       }
-      __syncthreads();
     }
     dist *= 2;
-    count++; 
+    count++;
+    __syncthreads(); 
   }
   if (count % 2 == 0){
     d_collectSumScan[idx] = s_inputVals[threadIdx.x];
@@ -143,14 +140,12 @@ const size_t numMaxBlock)
   while (dist < numMaxBlock) {
     if(count % 2 == 0){
       s_sumBlockTMP[idx] = s_sumBlock[idx];
-      __syncthreads();
       if (idx >= dist) {
         s_sumBlockTMP[idx] += s_sumBlock[idx - dist];
       }
     }
     else {
       s_sumBlock[idx] = s_sumBlockTMP[idx];
-      __syncthreads();
       if (idx >= dist) {
         s_sumBlock[idx] += s_sumBlockTMP[idx - dist];
       }
@@ -294,18 +289,11 @@ void your_sort(unsigned int* const d_inputVals,
       cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
     checkCudaErrors(cudaMemcpy(h_inputVals, d_inputVals, sizeof(unsigned int) * numElems, cudaMemcpyDeviceToHost));
       printf("Cut");
-  for(int i = 0; i < 10; i++) {
-    printf("%d ", h_inputVals[i]);
-  }
-  printf("\n");
-  for(int i = 0; i < 10; i++) {
-    printf("%d ", d_interVals[i]);
-  }
-  printf("%d ", d_interVals[numElems - 1]);
-  printf("\n");
+      printf("%d ", d_interVals[numElems - 1]);
+      printf("\n");
       //printf("%d \n", d_interVals[numElems - 2]);
 
-     //print_debug(d_inputVals, d_interVals);
+    print_debug(d_inputVals, d_interVals);
       
     checkCudaErrors(cudaMemcpy(d_inputPos, d_interPos, sizeof(unsigned int) * numElems, cudaMemcpyDeviceToDevice));
     checkCudaErrors(cudaMemcpy(d_inputVals, d_interVals, sizeof(unsigned int) * numElems, cudaMemcpyDeviceToDevice));
