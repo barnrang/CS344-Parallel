@@ -293,7 +293,7 @@ void your_sort(unsigned int* const d_inputVals,
       printf("\n");
       //printf("%d \n", d_interVals[numElems - 2]);
 
-    print_debug(d_inputVals, d_interVals);
+    print_debug(h_inputVals, d_interVals);
       
     checkCudaErrors(cudaMemcpy(d_inputPos, d_interPos, sizeof(unsigned int) * numElems, cudaMemcpyDeviceToDevice));
     checkCudaErrors(cudaMemcpy(d_inputVals, d_interVals, sizeof(unsigned int) * numElems, cudaMemcpyDeviceToDevice));
