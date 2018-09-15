@@ -102,6 +102,7 @@ __global__ void  scanSB(unsigned int* const d_inputVals,
   while (dist < FIND_MAX_THREADS) {
     if (count % 2 == 0){
       s_inputValsTMP[threadIdx.x] = s_inputVals[threadIdx.x];
+      __syncthreads();
       if (threadIdx.x >= dist) {
         s_inputValsTMP[threadIdx.x] += s_inputVals[threadIdx.x - dist];
       }
@@ -109,6 +110,7 @@ __global__ void  scanSB(unsigned int* const d_inputVals,
     }
     else {
       s_inputVals[threadIdx.x] = s_inputValsTMP[threadIdx.x];
+      __syncthreads();
       if (threadIdx.x >= dist) {
         s_inputVals[threadIdx.x] += s_inputValsTMP[threadIdx.x - dist];
       }
@@ -141,12 +143,14 @@ const size_t numMaxBlock)
   while (dist < numMaxBlock) {
     if(count % 2 == 0){
       s_sumBlockTMP[idx] = s_sumBlock[idx];
+      __syncthreads();
       if (idx >= dist) {
         s_sumBlockTMP[idx] += s_sumBlock[idx - dist];
       }
     }
     else {
       s_sumBlock[idx] = s_sumBlockTMP[idx];
+      __syncthreads();
       if (idx >= dist) {
         s_sumBlock[idx] += s_sumBlockTMP[idx - dist];
       }
