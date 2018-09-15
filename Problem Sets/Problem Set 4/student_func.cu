@@ -79,18 +79,21 @@ const size_t numElems)
 }
 
 __global__ scanSB(unsigned int* const d_inputVals, 
-  unsigned int *d_collectScan,
+  bool *d_collectScan,
   unsigned int *d_collectSumScan,
   unsigned int *d_sumBlock,
   unsigned int pos,
   size_t const numElems,
-  unsigned int compare) 
+  unsigned int compare,
+  int numMaxBlock) 
 {
   __shared__ unsigned int s_inputVals[FIND_MAX_THREADS];
   int idx = threadIdx.x + blockIdx.x * blockDim.x;
   if (idx < numElems){
     s_inputVals[idx] = d_inputVals[idx] & pos == compare;
     d_collectScan[idx] = s_inputVals[idx];
+  } else {
+    s_inputVals[idx] = 0;
   }
   __syncthreads();
 
@@ -104,11 +107,12 @@ __global__ scanSB(unsigned int* const d_inputVals,
     __syncthreads();
   }
   d_collectSumScan[idx] = s_inputVals[threadIdx.x];
-  d_sumBlock[blockIdx.x] = s_inputVals[FIND_MAX_THREADS - 1];
+  if (blockIdx.x < (numMaxBlock - 1)) d_sumBlock[blockIdx.x + 1] = s_inputVals[FIND_MAX_THREADS - 1];
+  else d_sumBlock[0] = 0;
 }
 
 __global__ reduceBlockSum(unsigned int *d_sumBlock,
-const size_t numMaxBlock)
+int numMaxBlock)
 {
   __shared__ unsigned int s_sumBlock[numMaxBlock];
   int idx = threadIdx.x;
@@ -128,7 +132,7 @@ const size_t numMaxBlock)
 }
 
 __global__ mergeScan(unsigned int* const d_inputVals,
-unsigned int *d_collectScan,
+bool *d_collectScan,
 unsigned int *d_collectSumScan,
 unsigned int *d_sumBlock,
 unsigned int *d_interVals,
@@ -137,8 +141,8 @@ unsigned int offset)
 {
   int idx = threadIdx.x + blockIdx.x * blockDim.x;
   if (d_collectScan[idx] == 0) return;
-  d_interVals[d_collectSumScan[idx] + d_sumBlock[max(blockIdx.x - 1, 0) + offset]] = d_inputVals[idx];
-  d_interPos[d_collectSumScan[idx] + d_sumBlock[max(blockIdx.x - 1, 0) + offset]] = d_inputPos[idx];
+  d_interVals[d_collectSumScan[idx] + d_sumBlock[blockIdx.x] + offset] = d_inputVals[idx];
+  d_interPos[d_collectSumScan[idx] + d_sumBlock[blockIdx.x] + offset] = d_inputPos[idx];
 }
 
 __global__ copyData(unsigned int* const d_inputVals, 
@@ -184,7 +188,8 @@ void your_sort(unsigned int* const d_inputVals,
     3. compact elements by merging all block
     */
     scanSB<<<numMaxBlock,FIND_MAX_THREADS>>>(d_inputVals, 
-      d_collectScan, d_sumBlock, MSB, numElems, 0);
+      d_collectScan, d_sumBlock, MSB, numElems, 0,
+      numMaxBlock);
     reduceBlockSum<<<1,numMaxBlock>>>(d_sumBlock, numMaxBlock);
     mergeScan<<<numMaxBlock, FIND_MAX_THREADS>>>(d_inputVals,
       d_collectScan,
@@ -194,7 +199,8 @@ void your_sort(unsigned int* const d_inputVals,
       0);
     int offset = d_sumBlock[numMaxBlock - 1];
     scanSB<<<numMaxBlock,FIND_MAX_THREADS>>>(d_inputVals, 
-      d_collectScan, d_sumBlock, MSB, numElems, 1);
+      d_collectScan, d_sumBlock, MSB, numElems, 1,
+      numMaxBlock);
     reduceBlockSum<<<1,numMaxBlock>>>(d_sumBlock, numMaxBlock);
     mergeScan<<<numMaxBlock, FIND_MAX_THREADS>>>(d_inputVals,
       d_collectScan,
