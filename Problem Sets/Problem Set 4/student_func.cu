@@ -200,7 +200,7 @@ void your_sort(unsigned int* const d_inputVals,
   checkCudaErrors(cudaMallocManaged(&d_collectScan, sizeof(unsigned int) * numElems));
   checkCudaErrors(cudaMallocManaged(&d_interVals, sizeof(unsigned int) * numElems));
   checkCudaErrors(cudaMallocManaged(&d_interPos, sizeof(unsigned int) * numElems));
-  checkCudaErrors(cudaMallocManaged(&d_sumBlock, sizeof(unsigned int) * numMaxBlock));
+  checkCudaErrors(cudaMallocManaged(&d_sumBlock, sizeof(unsigned int) * (numMaxBlock+1)));
   for (int i = 0; i < N; ++i) {
     /*
     1. Predict & Scan through each block
