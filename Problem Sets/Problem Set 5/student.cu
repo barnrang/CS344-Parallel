@@ -159,6 +159,19 @@ void computeHistogram(const unsigned int* const d_vals, //INPUT
                       const unsigned int numBins,
                       const unsigned int numElems)
 {
+
+  /*
+  Solution 1
+  Just a atomics
+  */
+
+  int numBlock = (numElems + THREAD_PER_BLOCK - 1) / THREAD_PER_BLOCK;
+  baseline<<<numBlock,THREAD_PER_BLOCK>>>(d_vals, //INPUT
+    d_histo,      //OUPUT
+    numBins,
+    numElems);
+  
+
   /*
   1. Compact into coarse bin
   2. Concurrently stream coarse bin into bins
@@ -173,6 +186,7 @@ void computeHistogram(const unsigned int* const d_vals, //INPUT
   This might be done in O(KlogN)
   */
 
+  /*
   cudaStream_t streams[NUM_STREAMS];
   unsigned int *inter_sum[numBins]; 
   for (int i = 0; i < numBins; i++) {
@@ -193,7 +207,7 @@ void computeHistogram(const unsigned int* const d_vals, //INPUT
     cudaMemcpyAsync(&d_histo[i], &inter_sum[i][0], sizeof(int),
        cudaMemcpyDeviceToDevice, streams[i]);
   }
-
+  */
 
   //if you want to use/launch more than one kernel,
   //feel free
