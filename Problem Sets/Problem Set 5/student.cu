@@ -27,7 +27,7 @@
 
 #include "utils.h"
 int const NUM_STREAMS = 16;
-int const THREAD_PER_BLOCK = 256;
+int const THREAD_PER_BLOCK = 1024;
 
 __global__
 void predictAndScan(const unsigned int* const vals,

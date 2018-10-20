@@ -63,6 +63,76 @@
    */
 
 
+/*
+Channel Separate from P.2
+*/
+__global__
+void separateChannels(const uchar4* const inputImageRGBA,
+                      int numRows,
+                      int numCols,
+                      unsigned char* const redChannel,
+                      unsigned char* const greenChannel,
+                      unsigned char* const blueChannel)
+{
+  int x = blockIdx.x * blockDim.x + threadIdx.x;
+  int y = blockIdx.y * blockDim.y + threadIdx.y;
+  if ( x < numCols && y < numRows) {
+    int offset = x + y * numCols;
+    uchar4 rgba = inputImageRGBA[offset];
+    redChannel[offset] = (unsigned char)rgba.x;
+    greenChannel[offset] = (unsigned char)rgba.y;
+    blueChannel[offset] = (unsigned char)rgba.z;
+  }
+
+__global__ 
+void sourceMask(const uchar4* const sourceImg,
+                      uint2* sourceMask,
+                      const size_t numRowsSource, 
+                      const size_t numColsSource)
+{
+  int idx = threadIdx.x, idy = threadIdx.y, bdx = blockIdx.x, bdy = blockIdx.y;
+  int dimx = blockDim.x, dimy = blockDim.y;
+  int x = bdx * dimx + idx;
+  int y = bdy * dimy + idy;
+  int offset = x * numColsSource + y;
+  if (offset < (numRowsSource * numColsSource)){
+    sourceMask[offset] = ((sourceImg[offset].x + sourceImg[offset].y 
+      + sourceImg[offset].z) < 255 * 3) ? 1 : 0;
+  }
+}
+
+__global__ 
+void isStrictInterior(
+  uint2* sourceMask,
+  uint2* strictInteriorPixels,
+  uint2* borderPixels,
+  uint2* interiorPixels,
+  const size_t numRowsSource, 
+  const size_t numColsSource
+)
+{
+  int idx = threadIdx.x, idy = threadIdx.y, bdx = blockIdx.x, bdy = blockIdx.y;
+  int dimx = blockDim.x, dimy = blockDim.y;
+  int x = bdx * dimx + idx;
+  int y = bdy * dimy + idy;
+  int offset = x * numColsSource + y;
+  if (!sourceMask[offset]) {
+    borderPixels[offset] = 0;
+    interiorPixels[offset] = 0;
+    strictInteriorPixels[offset] = 0;
+  }
+  else if (sourceMask[(x - 1) * numColsSource + y] && sourceMask[(x + 1) * numColsSource + y]
+    && sourceMask[x * numColsSource + y - 1] && sourceMask[x * numColsSource + y + 1]){
+      strictInteriorPixels[offset] = 1;
+      interiorPixels[offset] = 1;
+      borderPixels[offset] = 0;
+    }
+  else {
+    strictInteriorPixels[offset] = 0;
+    interiorPixels[offset] = 0;
+    borderPixels[offset] = 1;
+  }
+}
 
 #include "utils.h"
 #include <thrust/host_vector.h>
