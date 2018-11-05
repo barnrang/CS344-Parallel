@@ -83,10 +83,11 @@ void separateChannels(const uchar4* const inputImageRGBA,
     greenChannel[offset] = (unsigned char)rgba.y;
     blueChannel[offset] = (unsigned char)rgba.z;
   }
+}
 
 __global__ 
 void sourceMask(const uchar4* const sourceImg,
-                      uint2* sourceMask,
+                      unsigned char* sourceMask,
                       const size_t numRowsSource, 
                       const size_t numColsSource)
 {
@@ -103,10 +104,10 @@ void sourceMask(const uchar4* const sourceImg,
 
 __global__ 
 void isStrictInterior(
-  uint2* sourceMask,
-  uint2* strictInteriorPixels,
-  uint2* borderPixels,
-  uint2* interiorPixels,
+  unsigned char* sourceMask,
+  unsigned char* strictInteriorPixels,
+  unsigned char* borderPixels,
+  unsigned char* interiorPixels,
   const size_t numRowsSource, 
   const size_t numColsSource
 )
@@ -134,6 +135,34 @@ void isStrictInterior(
   }
 }
 
+__global__ 
+void debugMask(
+  unsigned char* sourceMask,
+  uchar4* d_out,
+  const size_t numRowsSource, 
+  const size_t numColsSource
+)
+{
+  int idx = threadIdx.x, idy = threadIdx.y, bdx = blockIdx.x, bdy = blockIdx.y;
+  int dimx = blockDim.x, dimy = blockDim.y;
+  int x = bdx * dimx + idx;
+  int y = bdy * dimy + idy;
+  int offset = x * numColsSource + y;
+
+  if (sourceMask){
+    d_out[offset].x = 255;
+    d_out[offset].y = 255;
+    d_out[offset].z = 255;
+    d_out[offset].w= 0;
+  }
+  else {
+    d_out[offset].x = 0;
+    d_out[offset].y = 0;
+    d_out[offset].z = 0;
+    d_out[offset].w= 0;
+  }
+}
+
 #include "utils.h"
 #include <thrust/host_vector.h>
 
@@ -142,6 +171,51 @@ void your_blend(const uchar4* const h_sourceImg,  //IN
                 const uchar4* const h_destImg, //IN
                 uchar4* const h_blendedImg) //OUT
 {
+
+  const unsigned int KERNEL_DIM = 16;
+  unsigned int numPixel = numColsSource * numRowsSource;
+  unsigned char* d_sourceMask;
+  uchar4* d_sourceImg;
+  uchar4* d_blendedImg;
+  checkCudaErrors(cudaMallocManaged(&d_sourceImg, sizeof(uchar4) * numPixel));
+  checkCudaErrors(cudaMemcpy(d_sourceImg, h_sourceImg, sizeof(uchar4) * numPixel, 
+    cudaMemcpyHostToDevice));
+  checkCudaErrors(cudaMallocManaged(&d_sourceMask, sizeof(unsigned char) * numPixel));
+  checkCudaErrors(cudaMallocManaged(&d_blendedImg, sizeof(uchar4) * numPixel));
+
+
+  //Step 1
+  int rowBlock = (numRowsSource + KERNEL_DIM - 1)/KERNEL_DIM; 
+  int colBlock = (numColsSource + KERNEL_DIM - 1)/KERNEL_DIM; 
+  const dim3 blockSize(rowBlock, colBlock, 1);
+  const dim3 kernelSize(KERNEL_DIM, KERNEL_DIM, 1);
+  sourceMask<<<blockSize, kernelSize>>>(
+    d_sourceImg,
+    d_sourceMask,
+    numRowsSource, 
+    numColsSource
+  );
+
+  debugMask<<<blockSize, kernelSize>>>(
+    d_sourceMask,
+    d_blendedImg,
+    numRowsSource, 
+    numColsSource
+  );
+  
+  checkCudaErrors(cudaMemcpy(h_blendedImg, d_blendedImg, sizeof(uchar4) * numPixel, 
+    cudaMemcpyDeviceToHost));
+  
+
+  //Step 2
+
+
+
+  //Free memory
+  checkCudaErrors(cudaFree(d_sourceImg));
+  checkCudaErrors(cudaFree(d_sourceMask));
+  checkCudaErrors(cudaFree(d_blendedImg));
+  
 
   /* To Recap here are the steps you need to implement
   
