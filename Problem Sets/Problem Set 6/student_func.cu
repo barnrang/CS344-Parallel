@@ -149,7 +149,8 @@ void debugMask(
   int y = bdy * dimy + idy;
   int offset = x * numColsSource + y;
 
-  if (sourceMask){
+  if (offset >= (numRowsSource * numColsSource)) return;
+  if (sourceMask[offset]){
     d_out[offset].x = 255;
     d_out[offset].y = 255;
     d_out[offset].z = 255;
