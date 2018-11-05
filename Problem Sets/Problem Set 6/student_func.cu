@@ -154,13 +154,13 @@ void debugMask(
     d_out[offset].x = 255;
     d_out[offset].y = 255;
     d_out[offset].z = 255;
-    d_out[offset].w= 0;
+    d_out[offset].w= 255;
   }
   else {
     d_out[offset].x = 0;
     d_out[offset].y = 0;
     d_out[offset].z = 0;
-    d_out[offset].w= 0;
+    d_out[offset].w= 255;
   }
 }
 
