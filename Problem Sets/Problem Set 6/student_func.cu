@@ -105,7 +105,7 @@ void sourceMask(const uchar4* const sourceImg,
 __global__ 
 void isStrictInterior(
   unsigned char* sourceMask,
-  unsigned char* strictInteriorPixels,
+  //unsigned char* strictInteriorPixels,
   unsigned char* borderPixels,
   unsigned char* interiorPixels,
   const size_t numRowsSource, 
@@ -120,16 +120,16 @@ void isStrictInterior(
   if (!sourceMask[offset]) {
     borderPixels[offset] = 0;
     interiorPixels[offset] = 0;
-    strictInteriorPixels[offset] = 0;
+    //strictInteriorPixels[offset] = 0;
   }
   else if (sourceMask[(x - 1) * numColsSource + y] && sourceMask[(x + 1) * numColsSource + y]
     && sourceMask[x * numColsSource + y - 1] && sourceMask[x * numColsSource + y + 1]){
-      strictInteriorPixels[offset] = 1;
+      //strictInteriorPixels[offset] = 1;
       interiorPixels[offset] = 1;
       borderPixels[offset] = 0;
     }
   else {
-    strictInteriorPixels[offset] = 0;
+    //strictInteriorPixels[offset] = 0;
     interiorPixels[offset] = 0;
     borderPixels[offset] = 1;
   }
@@ -164,6 +164,43 @@ void debugMask(
   }
 }
 
+__global__ 
+void debugBorder(
+  unsigned char* sourceMask,
+  unsigned char* borderPixels,
+  unsigned char* interiorPixels,
+  uchar4* d_out,
+  const size_t numRowsSource, 
+  const size_t numColsSource
+)
+{
+  int idx = threadIdx.x, idy = threadIdx.y, bdx = blockIdx.x, bdy = blockIdx.y;
+  int dimx = blockDim.x, dimy = blockDim.y;
+  int x = bdx * dimx + idx;
+  int y = bdy * dimy + idy;
+  int offset = x * numColsSource + y;
+
+  if (offset >= (numRowsSource * numColsSource)) return;
+  if (borderPixels[offset]){
+    d_out[offset].x = 220;
+    d_out[offset].y = 20;
+    d_out[offset].z = 60;
+    d_out[offset].w= 255;
+  }
+  else if (interiorPixels[offset]){
+    d_out[offset].x = 0;
+    d_out[offset].y = 128;
+    d_out[offset].z = 0;
+    d_out[offset].w= 255;
+  }
+  else {
+    d_out[offset].x = 0;
+    d_out[offset].y = 0;
+    d_out[offset].z = 0;
+    d_out[offset].w= 255;
+  }
+}
+
 #include "utils.h"
 #include <thrust/host_vector.h>
 
@@ -176,13 +213,25 @@ void your_blend(const uchar4* const h_sourceImg,  //IN
   const unsigned int KERNEL_DIM = 16;
   unsigned int numPixel = numColsSource * numRowsSource;
   unsigned char* d_sourceMask;
+  //unsigned char* d_strictInteriorPixels;
+  unsigned char* d_borderPixels;
+  unsigned char* d_interiorPixels;
   uchar4* d_sourceImg;
+  uchar4* d_destImg;
   uchar4* d_blendedImg;
   checkCudaErrors(cudaMallocManaged(&d_sourceImg, sizeof(uchar4) * numPixel));
   checkCudaErrors(cudaMemcpy(d_sourceImg, h_sourceImg, sizeof(uchar4) * numPixel, 
     cudaMemcpyHostToDevice));
-  checkCudaErrors(cudaMallocManaged(&d_sourceMask, sizeof(unsigned char) * numPixel));
+  
+  checkCudaErrors(cudaMallocManaged(&d_destImg, sizeof(uchar4) * numPixel));
+  checkCudaErrors(cudaMemcpy(d_destImg, h_destImg, sizeof(uchar4) * numPixel, 
+    cudaMemcpyHostToDevice));
+  
   checkCudaErrors(cudaMallocManaged(&d_blendedImg, sizeof(uchar4) * numPixel));
+  checkCudaErrors(cudaMallocManaged(&d_sourceMask, sizeof(unsigned char) * numPixel));
+  //checkCudaErrors(cudaMallocManaged(&d_strictInteriorPixels, sizeof(unsigned char) * numPixel));
+  checkCudaErrors(cudaMallocManaged(&d_borderPixels, sizeof(unsigned char) * numPixel));
+  checkCudaErrors(cudaMallocManaged(&d_interiorPixels, sizeof(unsigned char) * numPixel));
 
 
   //Step 1
@@ -196,6 +245,7 @@ void your_blend(const uchar4* const h_sourceImg,  //IN
     numRowsSource, 
     numColsSource
   );
+  cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
 
   debugMask<<<blockSize, kernelSize>>>(
     d_sourceMask,
@@ -203,6 +253,7 @@ void your_blend(const uchar4* const h_sourceImg,  //IN
     numRowsSource, 
     numColsSource
   );
+  cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
   
   checkCudaErrors(cudaMemcpy(h_blendedImg, d_blendedImg, sizeof(uchar4) * numPixel, 
     cudaMemcpyDeviceToHost));
@@ -210,12 +261,57 @@ void your_blend(const uchar4* const h_sourceImg,  //IN
 
   //Step 2
 
+  isStrictInterior<<<blockSize, kernelSize>>>(
+    d_sourceMask,
+    d_borderPixels,
+    d_interiorPixels,
+    numRowsSource, 
+    numColsSource
+  );
+  cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
 
+  debugBorder<<<blockSize, kernelSize>>>(
+    d_sourceMask,
+    d_borderPixels,
+    d_interiorPixels,
+    d_blendedImg,
+    numRowsSource, 
+    numColsSource
+  );
+  cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
+
+  checkCudaErrors(cudaMemcpy(h_blendedImg, d_blendedImg, sizeof(uchar4) * numPixel, 
+    cudaMemcpyDeviceToHost));
+
+  // Step 3
+
+  unsigned char* redChannel;
+  unsigned char* greenChannel;
+  unsigned char* blueChannel;
+
+  checkCudaErrors(cudaMallocManaged(&redChannel, sizeof(unsigned char) * numPixel));
+  checkCudaErrors(cudaMallocManaged(&greenChannel, sizeof(unsigned char) * numPixel));
+  checkCudaErrors(cudaMallocManaged(&blueChannel, sizeof(unsigned char) * numPixel));
+
+  separateChannels<<<blockSize, kernelSize>>>(
+    d_destImg,
+    numRowsSource,
+    numColsSource,
+    redChannel,
+    greenChannel,
+    blueChannel
+  );
+  cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
+
+  // Step 4
 
   //Free memory
   checkCudaErrors(cudaFree(d_sourceImg));
+  checkCudaErrors(cudaFree(d_destImg));
   checkCudaErrors(cudaFree(d_sourceMask));
   checkCudaErrors(cudaFree(d_blendedImg));
+  checkCudaErrors(cudaFree(d_borderPixels));
+  checkCudaErrors(cudaFree(d_interiorPixels));
   
 
   /* To Recap here are the steps you need to implement
