@@ -1,3 +1,6 @@
+# My solution for CS344 class
+All problems were run on GCP, cuda 9.2. Some problem (1,2) couldn't pass the test without error-exemption even the output image look completely correct which might be the problem of the code itself or the GCP environment (originally this HW aimed for cuda5.0).
+
 cs344
 =====
 
