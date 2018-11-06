@@ -118,7 +118,6 @@ void sourceMask(const uchar4* const sourceImg,
 __global__ 
 void isStrictInterior(
   unsigned char* sourceMask,
-  //unsigned char* strictInteriorPixels,
   unsigned char* borderPixels,
   unsigned char* interiorPixels,
   const size_t numRowsSource, 
@@ -131,20 +130,16 @@ void isStrictInterior(
   int y = bdy * dimy + idy;
   if (x >= numRowsSource || y >= numColsSource) return;
   int offset = x * numColsSource + y;
-  //if (offset >= numColsSource * numRowsSource) return;
   if (!sourceMask[offset]) {
     borderPixels[offset] = 0;
     interiorPixels[offset] = 0;
-    //strictInteriorPixels[offset] = 0;
   }
   else if (sourceMask[(x - 1) * numColsSource + y] && sourceMask[(x + 1) * numColsSource + y]
     && sourceMask[x * numColsSource + y - 1] && sourceMask[x * numColsSource + y + 1]){
-      //strictInteriorPixels[offset] = 1;
       interiorPixels[offset] = 1;
       borderPixels[offset] = 0;
     }
   else {
-    //strictInteriorPixels[offset] = 0;
     interiorPixels[offset] = 0;
     borderPixels[offset] = 1;
   }
@@ -164,8 +159,6 @@ void debugMask(
   int y = bdy * dimy + idy;
   if (x >= numRowsSource || y >= numColsSource) return;
   int offset = x * numColsSource + y;
-
-  //if (offset >= (numRowsSource * numColsSource)) return;
   if (sourceMask[offset]){
     d_out[offset].x = 255;
     d_out[offset].y = 255;
@@ -196,8 +189,6 @@ void debugBorder(
   int y = bdy * dimy + idy;
   if (x >= numRowsSource || y >= numColsSource) return;
   int offset = x * numColsSource + y;
-
-  //if (offset >= (numRowsSource * numColsSource)) return;
   if (borderPixels[offset]){
     d_out[offset].x = 220;
     d_out[offset].y = 20;
@@ -232,7 +223,6 @@ void copy(
   int y = bdy * dimy + idy;
   int offset = x * numColsSource + y;
   if (x >= numRowsSource || y >= numColsSource) return;
-  //if (offset >= numColsSource * numRowsSource) return;
   to_this[offset] = (float)from[offset];
 
 }
@@ -252,7 +242,6 @@ void computeG(
   int y = bdy * dimy + idy;
   if (x >= numRowsSource || y >= numColsSource) return;
   int offset = x * numColsSource + y;
-  //if (offset >= numRowsSource * numColsSource) return;
   if (d_interiorPixels[offset]) {
     float sum = 4.f * channel[offset];
     sum -= (float)channel[offset - numColsSource] + (float)channel[offset + numColsSource];
@@ -310,7 +299,6 @@ void pasteImage(
   int y = bdy * dimy + idy;
   if (x >= numRowsSource || y >= numColsSource) return;
   int offset = x * numColsSource + y;
-  //if (offset >= numColsSource * numRowsSource) return;
   if (!d_interiorPixels[offset]) return;
 
   d_destImg[offset].x = (unsigned char)blendedValsRed[offset];
@@ -325,10 +313,47 @@ void your_blend(const uchar4* const h_sourceImg,  //IN
                 uchar4* const h_blendedImg) //OUT
 {
 
+  /* To Recap here are the steps you need to implement
+  
+     1) Compute a mask of the pixels from the source image to be copied
+        The pixels that shouldn't be copied are completely white, they
+        have R=255, G=255, B=255.  Any other pixels SHOULD be copied.
+
+     2) Compute the interior and border regions of the mask.  An interior
+        pixel has all 4 neighbors also inside the mask.  A border pixel is
+        in the mask itself, but has at least one neighbor that isn't.
+
+     3) Separate out the incoming image into three separate channels
+
+     4) Create two float(!) buffers for each color channel that will
+        act as our guesses.  Initialize them to the respective color
+        channel of the source image since that will act as our intial guess.
+
+     5) For each color channel perform the Jacobi iteration described 
+        above 800 times.
+
+     6) Create the output image by replacing all the interior pixels
+        in the destination image with the result of the Jacobi iterations.
+        Just cast the floating point values to unsigned chars since we have
+        already made sure to clamp them to the correct range.
+
+      Since this is final assignment we provide little boilerplate code to
+      help you.  Notice that all the input/output pointers are HOST pointers.
+
+      You will have to allocate all of your own GPU memory and perform your own
+      memcopies to get data in and out of the GPU memory.
+
+      Remember to wrap all of your calls with checkCudaErrors() to catch any
+      thing that might go wrong.  After each kernel call do:
+
+      cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
+
+      to catch any errors that happened while executing the kernel.
+  */
+
   const unsigned int KERNEL_DIM = 16;
   unsigned int numPixel = numColsSource * numRowsSource;
   unsigned char* d_sourceMask;
-  //unsigned char* d_strictInteriorPixels;
   unsigned char* d_borderPixels;
   unsigned char* d_interiorPixels;
   uchar4* d_sourceImg;
@@ -344,7 +369,6 @@ void your_blend(const uchar4* const h_sourceImg,  //IN
   
   checkCudaErrors(cudaMallocManaged(&d_blendedImg, sizeof(uchar4) * numPixel));
   checkCudaErrors(cudaMallocManaged(&d_sourceMask, sizeof(unsigned char) * numPixel));
-  //checkCudaErrors(cudaMallocManaged(&d_strictInteriorPixels, sizeof(unsigned char) * numPixel));
   checkCudaErrors(cudaMallocManaged(&d_borderPixels, sizeof(unsigned char) * numPixel));
   checkCudaErrors(cudaMallocManaged(&d_interiorPixels, sizeof(unsigned char) * numPixel));
 
@@ -385,20 +409,18 @@ void your_blend(const uchar4* const h_sourceImg,  //IN
   );
   cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
 
-  debugBorder<<<blockSize, kernelSize>>>(
-    d_sourceMask,
-    d_borderPixels,
-    d_interiorPixels,
-    d_blendedImg,
-    numRowsSource, 
-    numColsSource
-  );
-  cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
+  // debugBorder<<<blockSize, kernelSize>>>(
+  //   d_sourceMask,
+  //   d_borderPixels,
+  //   d_interiorPixels,
+  //   d_blendedImg,
+  //   numRowsSource, 
+  //   numColsSource
+  // );
+  // cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
 
-  checkCudaErrors(cudaMemcpy(h_blendedImg, d_blendedImg, sizeof(uchar4) * numPixel, 
-    cudaMemcpyDeviceToHost));
-
-  //return;
+  // checkCudaErrors(cudaMemcpy(h_blendedImg, d_blendedImg, sizeof(uchar4) * numPixel, 
+  //   cudaMemcpyDeviceToHost));
 
   // Step 3
 
@@ -476,20 +498,6 @@ void your_blend(const uchar4* const h_sourceImg,  //IN
   copy<<<blockSize, kernelSize>>>(
     blendedValsBlue_2, d_srcBlueChannel, numRowsSource, numColsSource
   );
-  
-
-  // checkCudaErrors(cudaMemcpy(blendedValsRed_1, d_srcRedChannel, sizeof(float) * numPixel,
-  //   cudaMemcpyDeviceToDevice));
-  // checkCudaErrors(cudaMemcpy(blendedValsRed_2, d_srcRedChannel, sizeof(float) * numPixel,
-  //   cudaMemcpyDeviceToDevice));
-  // checkCudaErrors(cudaMemcpy(blendedValsGreen_1, d_srcGreenChannel, sizeof(float) * numPixel,
-  //   cudaMemcpyDeviceToDevice));
-  // checkCudaErrors(cudaMemcpy(blendedValsGreen_2, d_srcGreenChannel, sizeof(float) * numPixel,
-  //   cudaMemcpyDeviceToDevice));
-  // checkCudaErrors(cudaMemcpy(blendedValsBlue_1, d_srcBlueChannel, sizeof(float) * numPixel,
-  //   cudaMemcpyDeviceToDevice));
-  // checkCudaErrors(cudaMemcpy(blendedValsBlue_2, d_srcBlueChannel, sizeof(float) * numPixel,
-  //   cudaMemcpyDeviceToDevice));
 
   computeG<<<blockSize, kernelSize>>>( d_srcRedChannel, g_red, 
     d_interiorPixels, numRowsSource, numColsSource);
@@ -546,6 +554,8 @@ void your_blend(const uchar4* const h_sourceImg,  //IN
     
   }
 
+  // Step 6
+
   pasteImage<<<blockSize, kernelSize>>>(
     d_destImg,
     d_interiorPixels,
@@ -587,41 +597,4 @@ void your_blend(const uchar4* const h_sourceImg,  //IN
   checkCudaErrors(cudaFree(d_destGreenChannel));
   checkCudaErrors(cudaFree(d_destBlueChannel));
 
-  /* To Recap here are the steps you need to implement
-  
-     1) Compute a mask of the pixels from the source image to be copied
-        The pixels that shouldn't be copied are completely white, they
-        have R=255, G=255, B=255.  Any other pixels SHOULD be copied.
-
-     2) Compute the interior and border regions of the mask.  An interior
-        pixel has all 4 neighbors also inside the mask.  A border pixel is
-        in the mask itself, but has at least one neighbor that isn't.
-
-     3) Separate out the incoming image into three separate channels
-
-     4) Create two float(!) buffers for each color channel that will
-        act as our guesses.  Initialize them to the respective color
-        channel of the source image since that will act as our intial guess.
-
-     5) For each color channel perform the Jacobi iteration described 
-        above 800 times.
-
-     6) Create the output image by replacing all the interior pixels
-        in the destination image with the result of the Jacobi iterations.
-        Just cast the floating point values to unsigned chars since we have
-        already made sure to clamp them to the correct range.
-
-      Since this is final assignment we provide little boilerplate code to
-      help you.  Notice that all the input/output pointers are HOST pointers.
-
-      You will have to allocate all of your own GPU memory and perform your own
-      memcopies to get data in and out of the GPU memory.
-
-      Remember to wrap all of your calls with checkCudaErrors() to catch any
-      thing that might go wrong.  After each kernel call do:
-
-      cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
-
-      to catch any errors that happened while executing the kernel.
-  */
 }
