@@ -66,6 +66,19 @@
 /*
 Channel Separate from P.2
 */
+
+#include "utils.h"
+#include <thrust/host_vector.h>
+#include <vector>
+
+#ifndef max
+#define max( a, b ) ( ((a) > (b)) ? (a) : (b) )
+#endif
+
+#ifndef min
+#define min( a, b ) ( ((a) < (b)) ? (a) : (b) )
+#endif
+
 __global__
 void separateChannels(const uchar4* const inputImageRGBA,
                       int numRows,
@@ -76,8 +89,8 @@ void separateChannels(const uchar4* const inputImageRGBA,
 {
   int x = blockIdx.x * blockDim.x + threadIdx.x;
   int y = blockIdx.y * blockDim.y + threadIdx.y;
-  if ( x < numCols && y < numRows) {
-    int offset = x + y * numCols;
+  if ( x < numRows && y < numCols) {
+    int offset = x * numCols + y;
     uchar4 rgba = inputImageRGBA[offset];
     redChannel[offset] = (unsigned char)rgba.x;
     greenChannel[offset] = (unsigned char)rgba.y;
@@ -96,7 +109,7 @@ void sourceMask(const uchar4* const sourceImg,
   int x = bdx * dimx + idx;
   int y = bdy * dimy + idy;
   int offset = x * numColsSource + y;
-  if (offset < (numRowsSource * numColsSource)){
+  if (x < numRowsSource && y < numColsSource){
     sourceMask[offset] = ((sourceImg[offset].x + sourceImg[offset].y 
       + sourceImg[offset].z) < 255 * 3) ? 1 : 0;
   }
@@ -116,7 +129,9 @@ void isStrictInterior(
   int dimx = blockDim.x, dimy = blockDim.y;
   int x = bdx * dimx + idx;
   int y = bdy * dimy + idy;
+  if (x >= numRowsSource || y >= numColsSource) return;
   int offset = x * numColsSource + y;
+  //if (offset >= numColsSource * numRowsSource) return;
   if (!sourceMask[offset]) {
     borderPixels[offset] = 0;
     interiorPixels[offset] = 0;
@@ -147,9 +162,10 @@ void debugMask(
   int dimx = blockDim.x, dimy = blockDim.y;
   int x = bdx * dimx + idx;
   int y = bdy * dimy + idy;
+  if (x >= numRowsSource || y >= numColsSource) return;
   int offset = x * numColsSource + y;
 
-  if (offset >= (numRowsSource * numColsSource)) return;
+  //if (offset >= (numRowsSource * numColsSource)) return;
   if (sourceMask[offset]){
     d_out[offset].x = 255;
     d_out[offset].y = 255;
@@ -178,9 +194,10 @@ void debugBorder(
   int dimx = blockDim.x, dimy = blockDim.y;
   int x = bdx * dimx + idx;
   int y = bdy * dimy + idy;
+  if (x >= numRowsSource || y >= numColsSource) return;
   int offset = x * numColsSource + y;
 
-  if (offset >= (numRowsSource * numColsSource)) return;
+  //if (offset >= (numRowsSource * numColsSource)) return;
   if (borderPixels[offset]){
     d_out[offset].x = 220;
     d_out[offset].y = 20;
@@ -201,8 +218,106 @@ void debugBorder(
   }
 }
 
-#include "utils.h"
-#include <thrust/host_vector.h>
+__global__
+void copy(
+  float* to_this,
+  unsigned char* from,
+  const size_t numRowsSource, 
+  const size_t numColsSource
+)
+{
+  int idx = threadIdx.x, idy = threadIdx.y, bdx = blockIdx.x, bdy = blockIdx.y;
+  int dimx = blockDim.x, dimy = blockDim.y;
+  int x = bdx * dimx + idx;
+  int y = bdy * dimy + idy;
+  int offset = x * numColsSource + y;
+  if (x >= numRowsSource || y >= numColsSource) return;
+  //if (offset >= numColsSource * numRowsSource) return;
+  to_this[offset] = (float)from[offset];
+
+}
+
+__global__
+void computeG(
+  unsigned char* channel,
+  float* g,
+  unsigned char* d_interiorPixels,
+  const size_t numRowsSource, 
+  const size_t numColsSource
+)
+{
+  int idx = threadIdx.x, idy = threadIdx.y, bdx = blockIdx.x, bdy = blockIdx.y;
+  int dimx = blockDim.x, dimy = blockDim.y;
+  int x = bdx * dimx + idx;
+  int y = bdy * dimy + idy;
+  if (x >= numRowsSource || y >= numColsSource) return;
+  int offset = x * numColsSource + y;
+  //if (offset >= numRowsSource * numColsSource) return;
+  if (d_interiorPixels[offset]) {
+    float sum = 4.f * channel[offset];
+    sum -= (float)channel[offset - numColsSource] + (float)channel[offset + numColsSource];
+    sum -= (float)channel[offset - 1] + (float)channel[offset + 1];
+    g[offset] = sum;
+  } else {
+    g[offset] = 0;
+  }
+}
+
+__global__
+void naiveJacobi(
+  const unsigned char* const d_destImg,
+  const unsigned char* const d_interiorPixels,
+  const unsigned char* const d_borderPixels,
+  const size_t numColsSource,
+  const size_t numRowsSource,
+  float* const f,
+  const float* const g,
+  float* const f_next
+)
+{
+  int idx = threadIdx.x, idy = threadIdx.y, bdx = blockIdx.x, bdy = blockIdx.y;
+  int dimx = blockDim.x, dimy = blockDim.y;
+  int x = bdx * dimx + idx;
+  int y = bdy * dimy + idy;
+  if (x >= numRowsSource || y >= numColsSource) return;
+  int offset = x * numColsSource + y;
+  float sum = 0.f;
+  int iterate[4] = {offset - 1, offset + 1, (int)(offset - numColsSource), (int)(offset + numColsSource)};
+  if (!d_interiorPixels[offset]) return;
+  for (int i = 0; i < 4; i++) {
+    int coor = iterate[i];
+    sum += d_interiorPixels[coor] * f[coor] + (1 - d_interiorPixels[coor]) * d_destImg[coor];
+  }
+  float f_next_val = (sum + g[offset]) / 4.f;
+  f_next_val = min(255.f, max(0.f, f_next_val));
+  f_next[offset] = f_next_val;
+}
+
+__global__
+void pasteImage(
+  uchar4* d_destImg,
+  const unsigned char* const d_interiorPixels,
+  float* blendedValsRed,
+  float* blendedValsGreen,
+  float* blendedValsBlue,
+  const size_t numColsSource,
+  const size_t numRowsSource
+)
+{
+  int idx = threadIdx.x, idy = threadIdx.y, bdx = blockIdx.x, bdy = blockIdx.y;
+  int dimx = blockDim.x, dimy = blockDim.y;
+  int x = bdx * dimx + idx;
+  int y = bdy * dimy + idy;
+  if (x >= numRowsSource || y >= numColsSource) return;
+  int offset = x * numColsSource + y;
+  //if (offset >= numColsSource * numRowsSource) return;
+  if (!d_interiorPixels[offset]) return;
+
+  d_destImg[offset].x = (unsigned char)blendedValsRed[offset];
+  d_destImg[offset].y = (unsigned char)blendedValsGreen[offset];
+  d_destImg[offset].z = (unsigned char)blendedValsBlue[offset];
+  
+}
 
 void your_blend(const uchar4* const h_sourceImg,  //IN
                 const size_t numRowsSource, const size_t numColsSource,
@@ -247,16 +362,16 @@ void your_blend(const uchar4* const h_sourceImg,  //IN
   );
   cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
 
-  debugMask<<<blockSize, kernelSize>>>(
-    d_sourceMask,
-    d_blendedImg,
-    numRowsSource, 
-    numColsSource
-  );
-  cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
+  // debugMask<<<blockSize, kernelSize>>>(
+  //   d_sourceMask,
+  //   d_blendedImg,
+  //   numRowsSource, 
+  //   numColsSource
+  // );
+  // cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
   
-  checkCudaErrors(cudaMemcpy(h_blendedImg, d_blendedImg, sizeof(uchar4) * numPixel, 
-    cudaMemcpyDeviceToHost));
+  // checkCudaErrors(cudaMemcpy(h_blendedImg, d_blendedImg, sizeof(uchar4) * numPixel, 
+  //   cudaMemcpyDeviceToHost));
   
 
   //Step 2
@@ -283,27 +398,167 @@ void your_blend(const uchar4* const h_sourceImg,  //IN
   checkCudaErrors(cudaMemcpy(h_blendedImg, d_blendedImg, sizeof(uchar4) * numPixel, 
     cudaMemcpyDeviceToHost));
 
+  //return;
+
   // Step 3
 
-  unsigned char* redChannel;
-  unsigned char* greenChannel;
-  unsigned char* blueChannel;
+  unsigned char* d_srcRedChannel;
+  unsigned char* d_srcGreenChannel;
+  unsigned char* d_srcBlueChannel;
 
-  checkCudaErrors(cudaMallocManaged(&redChannel, sizeof(unsigned char) * numPixel));
-  checkCudaErrors(cudaMallocManaged(&greenChannel, sizeof(unsigned char) * numPixel));
-  checkCudaErrors(cudaMallocManaged(&blueChannel, sizeof(unsigned char) * numPixel));
+  unsigned char* d_destRedChannel;
+  unsigned char* d_destGreenChannel;
+  unsigned char* d_destBlueChannel;
+
+  checkCudaErrors(cudaMallocManaged(&d_srcRedChannel, sizeof(unsigned char) * numPixel));
+  checkCudaErrors(cudaMallocManaged(&d_srcGreenChannel, sizeof(unsigned char) * numPixel));
+  checkCudaErrors(cudaMallocManaged(&d_srcBlueChannel, sizeof(unsigned char) * numPixel));
+  checkCudaErrors(cudaMallocManaged(&d_destRedChannel, sizeof(unsigned char) * numPixel));
+  checkCudaErrors(cudaMallocManaged(&d_destGreenChannel, sizeof(unsigned char) * numPixel));
+  checkCudaErrors(cudaMallocManaged(&d_destBlueChannel, sizeof(unsigned char) * numPixel));
+
+  separateChannels<<<blockSize, kernelSize>>>(
+    d_sourceImg,
+    numRowsSource,
+    numColsSource,
+    d_srcRedChannel,
+    d_srcGreenChannel,
+    d_srcBlueChannel
+  );
 
   separateChannels<<<blockSize, kernelSize>>>(
     d_destImg,
     numRowsSource,
     numColsSource,
-    redChannel,
-    greenChannel,
-    blueChannel
+    d_destRedChannel,
+    d_destGreenChannel,
+    d_destBlueChannel
   );
   cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
 
   // Step 4
+
+  float *blendedValsRed_1;
+  float *blendedValsRed_2;
+  float *blendedValsGreen_1;
+  float *blendedValsGreen_2;
+  float *blendedValsBlue_1;
+  float *blendedValsBlue_2;
+  float *g_red;
+  float *g_green;
+  float *g_blue;
+
+  checkCudaErrors(cudaMallocManaged(&blendedValsRed_1, sizeof(float) * numPixel));
+  checkCudaErrors(cudaMallocManaged(&blendedValsRed_2, sizeof(float) * numPixel));
+  checkCudaErrors(cudaMallocManaged(&blendedValsGreen_1, sizeof(float) * numPixel));
+  checkCudaErrors(cudaMallocManaged(&blendedValsGreen_2, sizeof(float) * numPixel));
+  checkCudaErrors(cudaMallocManaged(&blendedValsBlue_1, sizeof(float) * numPixel));
+  checkCudaErrors(cudaMallocManaged(&blendedValsBlue_2, sizeof(float) * numPixel));
+  checkCudaErrors(cudaMallocManaged(&g_blue, sizeof(float) * numPixel));
+  checkCudaErrors(cudaMallocManaged(&g_green, sizeof(float) * numPixel));
+  checkCudaErrors(cudaMallocManaged(&g_red, sizeof(float) * numPixel));
+
+  copy<<<blockSize, kernelSize>>>(
+    blendedValsRed_1, d_srcRedChannel, numRowsSource, numColsSource
+  );
+  copy<<<blockSize, kernelSize>>>(
+    blendedValsRed_2, d_srcRedChannel, numRowsSource, numColsSource
+  );
+  copy<<<blockSize, kernelSize>>>(
+    blendedValsGreen_1, d_srcGreenChannel, numRowsSource, numColsSource
+  );
+  copy<<<blockSize, kernelSize>>>(
+    blendedValsGreen_2, d_srcGreenChannel, numRowsSource, numColsSource
+  );
+  copy<<<blockSize, kernelSize>>>(
+    blendedValsBlue_1, d_srcBlueChannel, numRowsSource, numColsSource
+  );
+  copy<<<blockSize, kernelSize>>>(
+    blendedValsBlue_2, d_srcBlueChannel, numRowsSource, numColsSource
+  );
+  
+
+  // checkCudaErrors(cudaMemcpy(blendedValsRed_1, d_srcRedChannel, sizeof(float) * numPixel,
+  //   cudaMemcpyDeviceToDevice));
+  // checkCudaErrors(cudaMemcpy(blendedValsRed_2, d_srcRedChannel, sizeof(float) * numPixel,
+  //   cudaMemcpyDeviceToDevice));
+  // checkCudaErrors(cudaMemcpy(blendedValsGreen_1, d_srcGreenChannel, sizeof(float) * numPixel,
+  //   cudaMemcpyDeviceToDevice));
+  // checkCudaErrors(cudaMemcpy(blendedValsGreen_2, d_srcGreenChannel, sizeof(float) * numPixel,
+  //   cudaMemcpyDeviceToDevice));
+  // checkCudaErrors(cudaMemcpy(blendedValsBlue_1, d_srcBlueChannel, sizeof(float) * numPixel,
+  //   cudaMemcpyDeviceToDevice));
+  // checkCudaErrors(cudaMemcpy(blendedValsBlue_2, d_srcBlueChannel, sizeof(float) * numPixel,
+  //   cudaMemcpyDeviceToDevice));
+
+  computeG<<<blockSize, kernelSize>>>( d_srcRedChannel, g_red, 
+    d_interiorPixels, numRowsSource, numColsSource);
+  cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
+  computeG<<<blockSize, kernelSize>>>( d_srcBlueChannel, g_blue, 
+    d_interiorPixels, numRowsSource, numColsSource);
+  cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
+  computeG<<<blockSize, kernelSize>>>( d_srcGreenChannel, g_green, 
+    d_interiorPixels, numRowsSource, numColsSource);
+  cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
+
+  // Step 5
+
+  for (int i = 0; i < 800; ++i) {
+    naiveJacobi <<<blockSize, kernelSize>>>(
+      d_destRedChannel,
+      d_interiorPixels,
+      d_borderPixels,
+      numColsSource,
+      numRowsSource,
+      blendedValsRed_1,
+      g_red,
+      blendedValsRed_2
+    );
+
+    naiveJacobi <<<blockSize, kernelSize>>>(
+      d_destGreenChannel,
+      d_interiorPixels,
+      d_borderPixels,
+      numColsSource,
+      numRowsSource,
+      blendedValsGreen_1,
+      g_green,
+      blendedValsGreen_2
+    );
+
+    naiveJacobi <<<blockSize, kernelSize>>>(
+      d_destBlueChannel,
+      d_interiorPixels,
+      d_borderPixels,
+      numColsSource,
+      numRowsSource,
+      blendedValsBlue_1,
+      g_blue,
+      blendedValsBlue_2
+    );
+    cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
+    checkCudaErrors(cudaMemcpy(blendedValsRed_1, blendedValsRed_2, sizeof(float) * numPixel,
+    cudaMemcpyDeviceToDevice));
+    checkCudaErrors(cudaMemcpy(blendedValsGreen_1, blendedValsGreen_2, sizeof(float) * numPixel,
+    cudaMemcpyDeviceToDevice));
+    checkCudaErrors(cudaMemcpy(blendedValsBlue_1, blendedValsBlue_2, sizeof(float) * numPixel,
+    cudaMemcpyDeviceToDevice));
+    
+  }
+
+  pasteImage<<<blockSize, kernelSize>>>(
+    d_destImg,
+    d_interiorPixels,
+    blendedValsRed_1,
+    blendedValsGreen_1,
+    blendedValsBlue_1,
+    numColsSource,
+    numRowsSource
+  );
+
+  checkCudaErrors(cudaMemcpy(h_blendedImg, d_destImg, sizeof(uchar4) * numPixel,
+  cudaMemcpyDeviceToHost));
+  
 
   //Free memory
   checkCudaErrors(cudaFree(d_sourceImg));
@@ -312,7 +567,25 @@ void your_blend(const uchar4* const h_sourceImg,  //IN
   checkCudaErrors(cudaFree(d_blendedImg));
   checkCudaErrors(cudaFree(d_borderPixels));
   checkCudaErrors(cudaFree(d_interiorPixels));
+
+  checkCudaErrors(cudaFree(blendedValsRed_1));
+  checkCudaErrors(cudaFree(blendedValsRed_2));
+  checkCudaErrors(cudaFree(blendedValsGreen_1));
+  checkCudaErrors(cudaFree(blendedValsGreen_2));
+  checkCudaErrors(cudaFree(blendedValsBlue_1));
+  checkCudaErrors(cudaFree(blendedValsBlue_2));
+
+  checkCudaErrors(cudaFree(g_blue));
+  checkCudaErrors(cudaFree(g_green));
+  checkCudaErrors(cudaFree(g_red));
   
+  checkCudaErrors(cudaFree(d_srcRedChannel));
+  checkCudaErrors(cudaFree(d_srcGreenChannel));
+  checkCudaErrors(cudaFree(d_srcBlueChannel));
+
+  checkCudaErrors(cudaFree(d_destRedChannel));
+  checkCudaErrors(cudaFree(d_destGreenChannel));
+  checkCudaErrors(cudaFree(d_destBlueChannel));
 
   /* To Recap here are the steps you need to implement
   
