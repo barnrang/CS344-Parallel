@@ -1,4 +1,6 @@
 # My solution for CS344 class
+Course Link: https://developer.nvidia.com/udacity-cs344-intro-parallel-programming
+
 All problems were run on GCP, cuda 9.2. The solutions are in the folder `Problem Sets/Problem Set <number>/student_func.cu`.
 
 cs344
